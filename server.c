@@ -2,73 +2,64 @@
 #include <string.h>
 #include "csapp.h"
 
-#define MAX_LINE 1024
-
 void fatal(const char *msg) {
-    fprintf(stderr, "%s\n", msg);
-    exit(1);
+  fprintf(stderr, "%s\n", msg);
+  exit(1);
 }
 
-// Function to reverse a string
-void reverse_string(char s[]) {
-    size_t len = strlen(s);
-    for (size_t i = 0; i < len / 2; i++) {
-        char tmp = s[i];
-        s[i] = s[len - i - 1];
-        s[len - i - 1] = tmp;
-    }
+// Return 0 if client sends "quit" message, 1 otherwise.
+int chat_with_client(int client_fd) {
+  rio_t rio;
+  int sum = 0, val;
+
+  // Initialize the rio_t object for buffered reading
+  rio_readinitb(&rio, client_fd);
+
+  // Read line from client
+  char buf[1024];
+  ssize_t rc = rio_readlineb(&rio, buf, sizeof(buf));
+  if (rc < 0) {
+    return 1; // error reading data from client
+  }
+
+  if (strcmp(buf, "quit\n") == 0 || strcmp(buf, "quit\r\n") == 0) {
+    return 0;
+  } else {
+    FILE *in = fmemopen(buf, (size_t) rc, "r");
+    while (fscanf(in, "%d", &val) == 1) { sum += val; }
+    fclose(in);
+
+    // Send message back to client
+    snprintf(buf, sizeof(buf), "Sum is %d\n", sum);
+    rio_writen(client_fd, buf, strlen(buf));
+
+    return 1;
+  }
 }
 
-// Trim any trailing newlines or carriage returns
-void trim_line_terminator(char s[]) {
-    char *p = strchr(s, '\r');
-    if (p != NULL) {
-        *p = '\0';
-    } else {
-        p = strchr(s, '\n');
-        if (p != NULL) {
-            *p = '\0';
-        }
+int main(int argc, char *argv[]) {
+  if (argc != 2) {
+    fatal("Usage: ./arithserver <port>");
+  }
+
+  int server_fd = open_listenfd(argv[1]);
+  if (server_fd < 0) {
+    fatal("Couldn't open server socket\n");
+  }
+
+  int keep_going = 1;
+
+  while (keep_going) {
+    int client_fd = Accept(server_fd, NULL, NULL);
+    if (client_fd > 0) {
+      keep_going = chat_with_client(client_fd);
+      // close the connection
+      close(client_fd);
     }
-}
+  }
 
-// Main function to handle communication with a client
-void chat_with_client(int client_fd) {
-    rio_t rio;
-    char buf[MAX_LINE];
-    ssize_t n;
+  // close server socket
+  close(server_fd);
 
-    // Initialize robust I/O
-    Rio_readinitb(&rio, client_fd);
-
-    while (1) {
-        // Read a line of text from the client
-        n = Rio_readlineb(&rio, buf, MAX_LINE);
-        if (n <= 0) {
-            break;  // EOF or error
-        }
-
-        // Trim line terminator
-        trim_line_terminator(buf);
-
-        // Check if client wants to quit
-        if (strcmp(buf, "quit") == 0) {
-            printf("Server: Received 'quit'. Closing connection.\n");
-            break;
-        }
-
-        // Reverse the string
-        reverse_string(buf);
-
-        // Append a newline safely
-        snprintf(buf + strlen(buf), MAX_LINE - strlen(buf), "\n");
-
-        // Send reversed string back to client
-        Rio_writen(client_fd, buf, strlen(buf));
-
-        printf("Server: Sent reversed message: %s", buf);
-    }
-
-    // Close the connection
-    close(client_fd);
+  return 0;
 }
